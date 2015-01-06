@@ -13,7 +13,7 @@ function usage() {
 }
 
 [ $EUID -eq 0 ] || die "must be root"
-[ $# -eq 5 ] || [ $# -eq 6 ] || usage
+[ $# -eq 6 ] || [ $# -eq 7 ] || usage
 
 _basedir="$( cd $( dirname -- $0 )/.. && /bin/pwd )"
 
@@ -77,8 +77,8 @@ echo "executing with..."
 echo "    img: ${img}"
 echo "    ami_name: ${ami_name}"
 echo "    block_dev: ${block_dev}"
-echo "    vol_id: ${vol_id}"
 echo "    virt_type: ${virt_type}"
+echo "    net_type: ${net_type}"
 echo "    grub_ver: ${grub_ver}"
 echo "    kernel_id: ${kernel_id}"
 echo "    root_device: ${root_device}"
@@ -89,7 +89,6 @@ which curl      >/dev/null 2>&1 || die "need curl"
 which jq        >/dev/null 2>&1 || die "need jq"
 which e2fsck    >/dev/null 2>&1 || die "need e2fsck"
 which resize2fs >/dev/null 2>&1 || die "need resize2fs"
-which hdparm    >/dev/null 2>&1 || die "need hdparm"
 which parted    >/dev/null 2>&1 || die "need parted"
 which losetup   >/dev/null 2>&1 || die "need losetup"
 which dmsetup   >/dev/null 2>&1 || die "need dmsetup"
@@ -111,8 +110,8 @@ fi
 
 ## create 10GB loopback volume
 mb_size=10240
-sec_size=$((${sec_size} * 1024 * 1024 / 512))
-dd if=/dev/zero status=noxfer of=bundle.img bs=1M count=1 seek=$((${mb_size} - 1))
+sec_size=$((${mb_size} * 1024 * 1024 / 512))
+dd if=/dev/zero status=noxfer of=bundle.img bs=1M count=${mb_size}
 ## partition volume
 parted --script bundle.img -- 'unit s mklabel msdos mkpart primary 63 -1s set 1 boot on print quit'
 ## attach image file to loopback device

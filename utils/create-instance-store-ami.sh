@@ -9,11 +9,11 @@ function die() {
 }
 
 function usage() {
-    die "usage: $0 <image> <ami name> <loopback device mapper name> <virtualization-type> <networking type> <s3 bucket> [<grub-ver>]"
+    die "usage: $0 <image> <ami name> <loopback device mapper name> <virtualization-type> <networking type> <s3 bucket> <aws cert> <aws key> <aws user id> [<grub-ver>]"
 }
 
 [ $EUID -eq 0 ] || die "must be root"
-[ $# -eq 6 ] || [ $# -eq 7 ] || usage
+[ $# -eq 9 ] || [ $# -eq 10 ] || usage
 
 _basedir="$( cd $( dirname -- $0 )/.. && /bin/pwd )"
 
@@ -26,7 +26,10 @@ img_target_dev="/dev/mapper/${block_dev}1"
 virt_type="${4}"
 net_type="${5}"
 s3_bucket="${6}"
-shift 6
+aws_cert="${7}"
+aws_key="${8}"
+aws_user="${9}"
+shift 9
 
 [ "${virt_type}" = "hvm" ] || [ "${virt_type}" = "paravirtual" ] || die "virtualization type must be hvm or paravirtual"
 [ "${net_type}" = "sriov" ] || [ "${net_type}" = "normal" ] || die "networking type must be sriov or normal"
@@ -100,7 +103,7 @@ which kpartx    >/dev/null 2>&1 || die "need kpartx"
 
 ## verify aws credentials and settings
 ## http://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html
-[ -n "${AWS_DEFAULT_REGION} ]     || die "AWS_DEFAULT_REGION not set""
+[ -n "${AWS_DEFAULT_REGION}" ]     || die "AWS_DEFAULT_REGION not set"
 [ -n "${AWS_ACCESS_KEY_ID}" ]     || die "AWS_ACCESS_KEY_ID not set"
 [ -n "${AWS_SECRET_ACCESS_KEY}" ] || die "AWS_SECRET_ACCESS_KEY not set"
 
@@ -156,13 +159,13 @@ if [ "${virt_type}" = "hvm" ]; then
         # make ${vol_mnt}/boot/grub/device.map with contents
         #   (hd0) ${block_dev}
         # because otherwise grub-install isn't happy, even with --recheck
-        echo "(hd0) ${block_dev}" > ${vol_mnt}/boot/grub/device.map
+        echo "(hd0) /dev/mapper/${block_dev}" > ${vol_mnt}/boot/grub/device.map
         
         ## also need to create fake /etc/mtab so grub-install can figure out
         ## what device / is
         echo "${img_target_dev} / ext4 rw,relatime 0 0" > ${vol_mnt}/etc/mtab
         
-        chroot ${vol_mnt} /sbin/grub-install --no-floppy ${block_dev}
+        chroot ${vol_mnt} /sbin/grub-install --no-floppy /dev/mapper/${block_dev}
 
         rm -f ${vol_mnt}/etc/mtab ${vol_mnt}/boot/grub/device.map
     elif [ ${grub_ver} = "grub2" ]; then
@@ -170,7 +173,7 @@ if [ "${virt_type}" = "hvm" ]; then
         
         ## @todo move grub2-mkconfig to ami-creator (add grub2 support)
         chroot ${vol_mnt} /sbin/grub2-mkconfig -o /boot/grub2/grub.cfg
-        chroot ${vol_mnt} /sbin/grub2-install ${block_dev}
+        chroot ${vol_mnt} /sbin/grub2-install /dev/mapper/${block_dev}
     fi
 
     umount ${vol_mnt}/{proc,dev,sys,}
@@ -180,34 +183,35 @@ fi
 kpartx -d /dev/mapper/${block_dev}
 dmsetup remove ${block_dev}
 losetup -d ${loop_dev}
-## FIXME ##
+
 ## bundle image
-#ec2-bundle-image --foo --bar --whatever
+ec2-bundle-image --batch -c ${aws_cert} -k ${aws_key} -u ${aws_user} -i bundle.img -r x86_64
 ## upload image
-#ec2-upload-bundle --foo --bar --whatever
+ec2-upload-bundle --retry --batch -b ${s3_bucket} -a $AWS_ACCESS_KEY_ID -s $AWS_SECRET_ACCESS_KEY -m /tmp/bundle.img.manifest.xml
 
 ## kernel-id hard-coded
 ## see http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/UserProvidedKernels.html
 ## fuck me, bash space escaping is a pain in the ass.
-#image_id=$( \
-#    aws ec2 register-image \
-#    ${kernel_id} \
-#    --architecture x86_64 \
-#    --name "${ami_name}" \
-#    --root-device-name ${root_device} \
-#    ## FIXME ## --block-device-mappings "[{\"DeviceName\":\"${root_device}\",\"Ebs\":{\"SnapshotId\":\"${snap_id}\",\"VolumeSize\":10}},{\"DeviceName\":\"/dev/sdb\",\"VirtualName\":\"ephemeral0\"}]" \
-#    --virtualization-type ${virt_type} \
-#    ${enhanced_networking} \
-#    | jq -r .ImageId
-#)
-#
-#echo "created AMI with id ${image_id}"
-#
-### create json file next to input image
-#{
-#    echo "{"
-#    echo "    \"virt_type\": \"${virt_type}\", "
-#    echo "    \"snapshot_id\": \"${snap_id}\", "
-#    echo "    \"ami_id\": \"${image_id}\""
-#    echo "}"
-#} > "${img%.*}.json"
+image_id=$( \
+    aws ec2 register-image \
+    ${kernel_id} \
+    --architecture x86_64 \
+    --name "${ami_name}" \
+    --root-device-name ${root_device} \
+    --virtualization-type ${virt_type} \
+    --region $AWS_DEFAULT_REGION \
+    --image-location ${s3_bucket}/bundle.img.manifest.xml \
+    ${enhanced_networking} \
+    | jq -r .ImageId
+)
+
+echo "created AMI with id ${image_id}"
+
+## create json file next to input image
+{
+    echo "{"
+    echo "    \"virt_type\": \"${virt_type}\", "
+    echo "    \"snapshot_id\": \"${snap_id}\", "
+    echo "    \"ami_id\": \"${image_id}\""
+    echo "}"
+} > "${img%.*}.json"

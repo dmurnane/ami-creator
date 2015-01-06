@@ -9,7 +9,7 @@ function die() {
 }
 
 function usage() {
-    die "usage: $0 <image> <ami name> <loopback device mapper name> <virtualization-type> <networking type> [<grub-ver>]"
+    die "usage: $0 <image> <ami name> <loopback device mapper name> <virtualization-type> <networking type> <s3 bucket> [<grub-ver>]"
 }
 
 [ $EUID -eq 0 ] || die "must be root"
@@ -25,7 +25,8 @@ block_dev="${3}"
 img_target_dev="/dev/mapper/${block_dev}1"
 virt_type="${4}"
 net_type="${5}"
-shift 5
+s3_bucket="${6}"
+shift 6
 
 [ "${virt_type}" = "hvm" ] || [ "${virt_type}" = "paravirtual" ] || die "virtualization type must be hvm or paravirtual"
 [ "${net_type}" = "sriov" ] || [ "${net_type}" = "normal" ] || die "networking type must be sriov or normal"
@@ -98,9 +99,9 @@ which kpartx    >/dev/null 2>&1 || die "need kpartx"
 ## the device map must not already exist
 [ -e "/dev/mapper/${block_dev}" ] && die "${block_dev} already exists"
 
-## set up/verify aws credentials and settings
+## verify aws credentials and settings
 ## http://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html
-## FIXME ##export AWS_DEFAULT_REGION="$( curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone | sed -e 's#.$##g' )"
+[ -n "${AWS_DEFAULT_REGION} ]     || die "AWS_DEFAULT_REGION not set""
 [ -n "${AWS_ACCESS_KEY_ID}" ]     || die "AWS_ACCESS_KEY_ID not set"
 [ -n "${AWS_SECRET_ACCESS_KEY}" ] || die "AWS_SECRET_ACCESS_KEY not set"
 
@@ -182,30 +183,32 @@ dmsetup remove ${block_dev}
 losetup -d ${loop_dev}
 ## FIXME ##
 ## bundle image
-ec2-bundle-image --foo --bar --region --whatever
+#ec2-bundle-image --foo --bar --whatever
+## upload image
+#ec2-upload-bundle --foo --bar --whatever
 
 ## kernel-id hard-coded
 ## see http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/UserProvidedKernels.html
 ## fuck me, bash space escaping is a pain in the ass.
-image_id=$( \
-    aws ec2 register-image \
-    ${kernel_id} \
-    --architecture x86_64 \
-    --name "${ami_name}" \
-    --root-device-name ${root_device} \
-    ## FIXME ## --block-device-mappings "[{\"DeviceName\":\"${root_device}\",\"Ebs\":{\"SnapshotId\":\"${snap_id}\",\"VolumeSize\":10}},{\"DeviceName\":\"/dev/sdb\",\"VirtualName\":\"ephemeral0\"}]" \
-    --virtualization-type ${virt_type} \
-    ${enhanced_networking} \
-    | jq -r .ImageId
-)
-
-echo "created AMI with id ${image_id}"
-
-## create json file next to input image
-{
-    echo "{"
-    echo "    \"virt_type\": \"${virt_type}\", "
-    echo "    \"snapshot_id\": \"${snap_id}\", "
-    echo "    \"ami_id\": \"${image_id}\""
-    echo "}"
-} > "${img%.*}.json"
+#image_id=$( \
+#    aws ec2 register-image \
+#    ${kernel_id} \
+#    --architecture x86_64 \
+#    --name "${ami_name}" \
+#    --root-device-name ${root_device} \
+#    ## FIXME ## --block-device-mappings "[{\"DeviceName\":\"${root_device}\",\"Ebs\":{\"SnapshotId\":\"${snap_id}\",\"VolumeSize\":10}},{\"DeviceName\":\"/dev/sdb\",\"VirtualName\":\"ephemeral0\"}]" \
+#    --virtualization-type ${virt_type} \
+#    ${enhanced_networking} \
+#    | jq -r .ImageId
+#)
+#
+#echo "created AMI with id ${image_id}"
+#
+### create json file next to input image
+#{
+#    echo "{"
+#    echo "    \"virt_type\": \"${virt_type}\", "
+#    echo "    \"snapshot_id\": \"${snap_id}\", "
+#    echo "    \"ami_id\": \"${image_id}\""
+#    echo "}"
+#} > "${img%.*}.json"

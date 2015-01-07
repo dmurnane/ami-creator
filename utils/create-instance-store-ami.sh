@@ -114,7 +114,7 @@ fi
 ## create 10GB loopback volume
 mb_size=10240
 sec_size=$((${mb_size} * 1024 * 1024 / 512))
-dd if=/dev/zero status=noxfer of=bundle.img bs=1M count=${mb_size}
+dd if=/dev/zero status=noxfer of=bundle.img bs=1M count=1 seek=$((${mb_size}-1))
 ## partition volume
 parted --script bundle.img -- 'unit s mklabel msdos mkpart primary 63 -1s set 1 boot on print quit'
 ## attach image file to loopback device
@@ -124,11 +124,12 @@ losetup ${loop_dev} bundle.img
 majmin=$(cat /sys/block/${loop_name}/dev)
 echo 0 ${sec_size} linear ${majmin} 0|dmsetup create ${block_dev}
 kpartx -a /dev/mapper/${block_dev}
-
+sync
 
 ## write image to volume
 echo "writing image to ${img_target_dev}"
-dd if=${img} of=${img_target_dev} conv=fsync oflag=sync bs=8k
+dd if=${img} of=${img_target_dev} bs=1M
+sync
 
 ## force-check the filesystem; re-write the image if it fails
 if ! fsck.ext4 -n -f ${img_target_dev} ; then
@@ -187,7 +188,7 @@ losetup -d ${loop_dev}
 ## bundle image
 ec2-bundle-image --batch -c ${aws_cert} -k ${aws_key} -u ${aws_user} -i bundle.img -r x86_64
 ## upload image
-ec2-upload-bundle --retry --batch -b ${s3_bucket} -a $AWS_ACCESS_KEY_ID -s $AWS_SECRET_ACCESS_KEY -m /tmp/bundle.img.manifest.xml
+ec2-upload-bundle --retry --batch -b ${s3_bucket}/${ami_name} -a $AWS_ACCESS_KEY_ID -s $AWS_SECRET_ACCESS_KEY -m /tmp/bundle.img.manifest.xml
 
 ## kernel-id hard-coded
 ## see http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/UserProvidedKernels.html
@@ -200,7 +201,7 @@ image_id=$( \
     --root-device-name ${root_device} \
     --virtualization-type ${virt_type} \
     --region $AWS_DEFAULT_REGION \
-    --image-location ${s3_bucket}/bundle.img.manifest.xml \
+    --image-location ${s3_bucket}/${ami_name}/bundle.img.manifest.xml \
     ${enhanced_networking} \
     | jq -r .ImageId
 )
